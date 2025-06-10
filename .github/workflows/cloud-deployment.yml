@@ -1,52 +1,82 @@
-parameters:
-  - name: artifactId
-    type: string
-  - name: noBuildAndRestore
-    type: boolean
-    default: false
-  - name: skipVersionCheck
-    type: boolean
-    default: false
-  - name: targetEnvironmentAlias
-    type: string
-    default: $(targetEnvironmentAlias)
+name: Deploy To Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifactId:
+        required: false
+        type: string
+      targetEnvironmentAlias:
+        description: 'The target environment alias to deploy to'
+        required: true
+        type: string
+
+  workflow_call:
+    inputs:
+      artifactId:
+        required: true
+        type: string
+      targetEnvironmentAlias:
+        description: 'The target environment alias to deploy to'
+        required: true
+        type: string
+      noBuildAndRestore:
+        description: 'Skip build and restore steps'
+        required: false
+        type: number
+        default: 0
+      skipVersionCheck:
+        description: 'Skip version check'
+        required: false
+        type: number
+        default: 0
+
+    secrets:
+      projectId:
+        required: true
+      umbracoCloudApiKey:
+        required: true
 
 jobs:
-  - job: StartDeployment
-    displayName: Start Deployment
+  startDeployment:
+    name: Start Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      runningDeploymentId: ${{ steps.requestStartDeployment.outputs.deploymentId }}
     steps:
-      # Actually request to start the deployment process in cloud
-      - task: PowerShell@2
-        displayName: Request Start Deployment
-        name: requestStartDeployment
-        inputs:
-          pwsh: true
-          targetType: 'filePath'
-          filePath: devops/powershell/Start-Deployment.ps1
-          arguments: > 
-            -ProjectId $(projectId)
-            -ApiKey $(umbracoCloudApiKey)
-            -ArtifactId ${{ parameters.artifactId }}
-            -TargetEnvironmentAlias ${{ parameters.targetEnvironmentAlias }}
-            -CommitMessage "Run for $(Build.BuildNumber)"
-            -NoBuildAndRestore $${{ parameters.noBuildAndRestore }}
-            -SkipVersionCheck $${{ parameters.skipVersionCheck }}
-            -PipelineVendor $(pipelineVendor)
+      - uses: actions/checkout@v4
 
-  - job: CheckDeploymentProgress
-    displayName: Check Deployment Progress
-    dependsOn: [ StartDeployment ]
-    variables:
-      deploymentId: $[ dependencies.StartDeployment.outputs['requestStartDeployment.deploymentId'] ]
+      # Request to prepare a deployment
+      # - sets the commit message to be used in cloud 
+      # - supplies you with a deploymentId to be used in the rest of the process
+      - name: Request Start Deployment
+        id: requestStartDeployment
+        shell: pwsh
+        run: >
+          ${{GITHUB.WORKSPACE}}/.github/powershell/Start-Deployment.ps1 
+          -ProjectId ${{ secrets.projectId }} 
+          -ApiKey ${{ secrets.umbracoCloudApiKey }} 
+          -ArtifactId ${{ inputs.artifactId }}
+          -TargetEnvironmentAlias ${{ inputs.targetEnvironmentAlias }}
+          -CommitMessage "Run number ${{github.run_number}}" 
+          -NoBuildAndRestore ${{ inputs.noBuildAndRestore }}
+          -SkipVersionCheck ${{ inputs.skipVersionCheck }}
+          -PipelineVendor GITHUB
+
+  awaitDeploymentFinished:
+    name: Await deployment to finish
+    runs-on: ubuntu-latest
+    needs: startDeployment
     steps:
+      - uses: actions/checkout@v4
+
       # Poll until deployment finishes 
-      - task: PowerShell@2
-        displayName: Wait for deployment completed
-        inputs:
-          pwsh: true
-          targetType: 'filePath'
-          filePath: devops/powershell/Test-DeploymentStatus.ps1
-          arguments: > 
-            -ProjectId $(projectId)
-            -ApiKey $(umbracoCloudApiKey)
-            -DeploymentId $(deploymentId)
+      - name: Wait for deployment completed 
+        shell: pwsh
+        env: 
+          runningDeploymentId: ${{ needs.startDeployment.outputs.runningDeploymentId }}
+        run: >
+          ${{GITHUB.WORKSPACE}}/.github/powershell/Test-DeploymentStatus.ps1 
+          -ProjectId ${{ secrets.projectId }} 
+          -ApiKey ${{ secrets.umbracoCloudApiKey }}
+          -DeploymentId ${{ env.runningDeploymentId }} 
