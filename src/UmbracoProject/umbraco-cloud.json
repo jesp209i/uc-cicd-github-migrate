@@ -1,7 +1,17 @@
 {
   "Deploy": {
     "Project": {
-      "Workspaces": []
+      "Name": "cicd github test setup",
+      "Alias": "cicd-github-test-setup",
+      "Id": "919c1d29-bc72-4439-a158-dc18900116d3",
+      "Workspaces": [
+        {
+          "Id": "c7571042-fe15-46a1-b104-7b682c7b7e20",
+          "Name": "Live",
+          "Type": "live",
+          "Url": "https://cicd-github-test-setup.euwest01.umbraco.io"
+        }
+      ]
     },
     "Settings": {}
   },
