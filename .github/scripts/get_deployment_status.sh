@@ -2,8 +2,8 @@
 
 # Set required variables
 projectId="$1"
-deploymentId="$2"
-apiKey="$3"
+apiKey="$2"
+deploymentId="$3"
 
 # Not required, defaults to 1200
 timeoutSeconds="$4"
@@ -20,11 +20,13 @@ if [[ -z "$baseUrl" ]]; then
 fi
 
 ### Endpoint docs
-# https://docs.umbraco.com/umbraco-cloud/set-up/project-settings/umbraco-cicd/umbracocloudapi#get-deployment-status
+# https://docs.umbraco.com/umbraco-cloud/set-up/project-settings/umbraco-cicd/umbracocloudapi/todo-v2
 #
-url="$baseUrl/v1/projects/$projectId/deployments/$deploymentId"
+baseStatusUrl="$baseUrl/v2/projects/$projectId/deployments/$deploymentId"
 
 run=1
+url=$baseStatusUrl
+modifiedUtc=""
 # Define function to call API and check status
 function call_api {
   echo "=====> Requesting Status - Run number $run"
@@ -33,18 +35,36 @@ function call_api {
     -H "Content-Type: application/json")
   responseCode=${response: -3}  
   content=${response%???}
-  
+  ##echo "$response"
   if [[ 10#$responseCode -eq 200 ]]; then
-    status=$(echo $content | jq -Rnr '[inputs] | join("\\n") | fromjson | .deploymentState' )
-    echo $(echo $content | jq -Rnr '[inputs] | join("\\n") | fromjson | .updateMessage' )
+    status=$(echo $content | jq -r '.deploymentState')
+    lastModifiedUtc=$(echo "$content" | jq -r '.modifiedUtc')
+
+
+    echo "DeploymentStatus: $status"
+
+    echo "$content" | jq -c '.deploymentStatusMessages[]' | while read -r item; do
+      timestamp=$(echo "$item" | jq -r '.timestampUtc')
+      message=$(echo "$item" | jq -r '.message')
+      echo "$timestamp: $message"
+    done
+
     return
   fi
 
   ## Let errors bubble forward 
-  echo "Unexpected API Response Code: $responseCode"
-  echo "---Response Start---"
-  echo $content
-  echo "---Response End---"
+  errorResponse=$content
+  echo "Unexpected API Response Code: $responseCode - More details below"
+  # Check if the input is valid JSON
+  cat "$errorResponse" | jq . > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+      echo "--- Response RAW ---\n"
+      cat "$errorResponse"
+  else 
+      echo "--- Response JSON formatted ---\n"
+      echo "$errorResponse" | jq .
+  fi
+  echo "\n---Response End---"
   exit 1
 }
 
@@ -52,6 +72,7 @@ status="Pending" #Status set to get the while-loop running :)
 
 while [[ $status == "Pending" || $status == "InProgress" || $status == "Queued" ]]; do
   call_api
+
   ((run++))
 
   # Handle timeout
@@ -62,8 +83,10 @@ while [[ $status == "Pending" || $status == "InProgress" || $status == "Queued" 
 
   # Dont write if Deployment was finished
   if [[ $status == "Pending" || $status == "InProgress" || $status == "Queued" ]]; then
-    echo "=====> Still Deploying - sleeping for 15 seconds"
-    sleep 15
+    sleepValue=25
+    echo "=====> Still Deploying - sleeping for $sleepValue seconds"
+    sleep $sleepValue
+    url="$baseStatusUrl?lastModifiedUtc=$lastModifiedUtc"
   fi
 done
 

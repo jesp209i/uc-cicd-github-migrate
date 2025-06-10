@@ -3,17 +3,18 @@
 # Set required variables
 projectId="$1"
 apiKey="$2"
-pipelineVendor="$3"
+targetEnvironmentAlias="$3"
+pipelineVendor="$4"
 
 # Not required, defaults to https://api.cloud.umbraco.com
-baseUrl="$4"
+baseUrl="$5"
 
 if [[ -z $baseUrl ]]; then
     baseUrl="https://api.cloud.umbraco.com"
 fi
 
 ### Endpoint docs
-# https://docs.umbraco.com/umbraco-cloud/set-up/project-settings/umbraco-cicd/umbracocloudapi#get-deployments
+# https://docs.umbraco.com/umbraco-cloud/set-up/project-settings/umbraco-cicd/umbracocloudapi/todo-v2
 #
 # We want the Id of the latest deployment that created changes to cloud 
 # Filter deployments
@@ -22,9 +23,9 @@ take=1
 # Exclude cloud null deployments
 includeNullDeployments=false
 
-queryString="take=$take&skip=$skip&includenulldeployments=$includeNullDeployments"
+queryString="take=$take&skip=$skip&includenulldeployments=$includeNullDeployments&targetEnvironmentAlias=$targetEnvironmentAlias"
 
-url="$baseUrl/v1/projects/$projectId/deployments?$queryString"
+url="$baseUrl/v2/projects/$projectId/deployments?$queryString"
 
 function call_api {
   response=$(curl -s -w "%{http_code}" -X GET $url \
@@ -32,9 +33,9 @@ function call_api {
     -H "Content-Type: application/json")
     responseCode=${response: -3}  
     content=${response%???}
-
+  cat "content"
   if [[ 10#$responseCode -eq 200 ]]; then
-    latestDeploymentId=$(echo $content | jq -Rnr '[inputs] | join("\\n") | fromjson | .deployments[0].deploymentId')
+    latestDeploymentId=$(echo $content | jq -Rnr '[inputs] | join("\\n") | fromjson | .data[0].id')
 
     if [[ -z $latestDeploymentId || $latestDeploymentId == null ]]; then
         echo "No latest CICD Flow Deployments found"
@@ -48,12 +49,20 @@ function call_api {
 
     return
   fi
-  ## Let errors bubble forward 
-  echo "Unexpected API Response Code: $responseCode"
-  echo "---Response Start---"
-  echo $response
-  echo "---Response End---"
 
+  ## Let errors bubble forward 
+  errorResponse=$response
+  echo "Unexpected API Response Code: $responseCode - More details below"
+  # Check if the input is valid JSON
+  cat "$errorResponse" | jq . > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+      echo "--- Response RAW ---\n"
+      cat "$errorResponse"
+  else 
+      echo "--- Response JSON formatted ---\n"
+      cat "$errorResponse" | jq .
+  fi
+  echo "\n---Response End---"
   exit 1
 }
 
@@ -65,6 +74,8 @@ if [[ "$pipelineVendor" == "GITHUB" ]]; then
   exit 0
 elif [[ "$pipelineVendor" == "AZUREDEVOPS" ]]; then
   echo "##vso[task.setvariable variable=latestDeploymentId;isOutput=true]$latestDeploymentId"
+  echo "##vso[task.setvariable variable=latestDeploymentId]$latestDeploymentId"
+
   exit 0
 elif [[ "$pipelineVendor" == "TESTRUN" ]]; then
   echo $pipelineVendor

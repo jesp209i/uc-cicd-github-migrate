@@ -6,34 +6,35 @@ on:
       newSha:
         description: 'The new SHA hash if there was a patch'
         value: ${{ jobs.applyRemoteChanges.outputs.newSha }}
+    inputs:
+      targetEnvironmentAlias:
+        description: 'The target environment alias to sync with'
+        required: true
+        type: string
     secrets:
       projectId:
         required: true
       umbracoCloudApiKey:
         required: true
 
-env:
-  projectId: ${{ secrets.projectId }}
-  umbracoCloudApiKey: ${{ secrets.umbracoCloudApiKey }}
-
 jobs:
   preflight:
-    name: Preflight checks
+    name: Check Cloud for changes
     runs-on: ubuntu-latest
     steps:
-      # Gets the latest CICD Flow deployment if there is any
-      # Will write "latestDeploymentId" to pipeline variables, value can be an uuid or empty string
+      # Gets the latest CICD Flow deployment to target Environment if there are any
+      # Will write "latestDeploymentId" to pipeline variables, value can be an uuid or empty string 
       - uses: actions/checkout@v4
       - name: Get Latest Deployment
         id: latest-deployment
         shell: bash
         run: >
-          bash ${{GITHUB.WORKSPACE}}/.github/scripts/get_latest_deployment.sh
-          ${{ env.projectId }} 
-          ${{ env.umbracoCloudApiKey }} 
+          bash ${{ GITHUB.WORKSPACE }}/.github/scripts/get_latest_deployment.sh 
+          ${{ secrets.projectId }} 
+          ${{ secrets.umbracoCloudApiKey }} 
+          ${{ inputs.targetEnvironmentAlias }} 
           GITHUB
-
-    outputs:
+    outputs: 
       latestDeploymentId: ${{ steps.latest-deployment.outputs.latestDeploymentId }}
 
   checkForChanges:
@@ -42,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Download git-patch file based on latest deployment
+      # Download git-patch file based on changes since latest deployment to target Environment
       # Will write "remoteChanges" to pipeline variables, value can be "yes" or "no"
       # When "remoteChanges" is yes, there will also be downloaded a patch-file to the path you specified in -DownloadFolder parameter
       - name: Fetch Changes From Cloud
@@ -52,27 +53,28 @@ jobs:
         id: latest-changes
         shell: bash
         run: >
-          bash ${{GITHUB.WORKSPACE}}/.github/scripts/get_changes_by_id.sh 
-          ${{ env.projectId }} 
-          ${{ env.umbracoCloudApiKey }} 
-          ${{ env.latestDeploymentId }}
-          ${{GITHUB.WORKSPACE}}/patch
-          GITHUB
+          bash ${{ GITHUB.WORKSPACE }}/.github/scripts/get_changes_by_id.sh 
+          ${{ secrets.projectId }} 
+          ${{ secrets.umbracoCloudApiKey }} 
+          ${{ env.latestDeploymentId }} 
+          ${{ inputs.targetEnvironmentAlias }} 
+          ${{ GITHUB.WORKSPACE }}/patch 
+          GITHUB 
 
       - name: See diff content if any
         if: ${{ steps.latest-changes.outputs.remoteChanges == 'yes' }}
         shell: pwsh
-        run: get-content ${{GITHUB.WORKSPACE}}/patch/git-patch.diff
+        run: get-content ${{ GITHUB.WORKSPACE }}/patch/git-patch.diff
 
       - name: Store diff before applying
         if: ${{ steps.latest-changes.outputs.remoteChanges == 'yes' }}
         uses: actions/upload-artifact@v4
         with:
           name: git-patch
-          path: ${{GITHUB.WORKSPACE}}/patch/git-patch.diff
+          path: ${{ GITHUB.WORKSPACE }}/patch/git-patch.diff
           retention-days: 1
     outputs:
-      remoteChanges: ${{ steps.latest-changes.outputs.remoteChanges }}
+      remoteChanges: ${{ steps.latest-changes.outputs.remoteChanges }}  
 
   applyRemoteChanges:
     name: Apply remote changes
@@ -93,7 +95,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: git-patch
-          path: ${{GITHUB.WORKSPACE}}/patch
+          path: ${{ GITHUB.WORKSPACE }}/patch
 
       # Using plain git to try an push changes back to local repo
       # Depending on your setup you may need to change settings and permissions to better fit your needs
@@ -112,7 +114,7 @@ jobs:
         if: ${{ env.remoteChanges == 'yes' }}
         shell: bash
         run: >
-          bash ${{GITHUB.WORKSPACE}}/.github/scripts/apply_patch.sh 
+          bash ${{ GITHUB.WORKSPACE }}/.github/scripts/apply_patch.sh 
           ${{ GITHUB.WORKSPACE }}/patch/git-patch.diff 
           ${{ env.latestDeploymentId }} 
           GITHUB

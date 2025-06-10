@@ -4,20 +4,22 @@
 projectId="$1"
 apiKey="$2"
 deploymentId="$3"
-downloadFolder="$4"
-pipelineVendor="$5"
+targetEnvironmentAlias="$4"
+downloadFolder="$5"
+pipelineVendor="$6"
 
 # Not required, defaults to https://api.cloud.umbraco.com
-baseUrl="$6" 
+baseUrl="$7" 
 
 if [[ -z "$baseUrl" ]]; then
     baseUrl="https://api.cloud.umbraco.com"
 fi
 
 ### Endpoint docs
-# https://docs.umbraco.com/umbraco-cloud/set-up/project-settings/umbraco-cicd/umbracocloudapi#get-deployment-diff
+# https://docs.umbraco.com/umbraco-cloud/set-up/project-settings/umbraco-cicd/umbracocloudapi/todo-v2
+#
 
-changeUrl="$baseUrl/v1/projects/$projectId/deployments/$deploymentId/diff"
+changeUrl="$baseUrl/v2/projects/$projectId/deployments/$deploymentId/diff?targetEnvironmentAlias=$targetEnvironmentAlias"
 filePath="$downloadFolder/git-patch.diff"
 
 # Get diff - stores file as git-patch.diff
@@ -45,10 +47,20 @@ function get_changes {
     remoteChanges="yes"
     return
   fi
-  echo "---Response Start---"
-  echo $filePath
-  echo -e "\n---Response End---"
-  echo "Unexpected response - see above"
+
+  ## Let errors bubble forward 
+  errorResponse=$filePath
+  echo "Unexpected API Response Code: $responseCode - More details below"
+  # Check if the input is valid JSON
+  cat "$errorResponse" | jq . > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+      echo "--- Response RAW ---"
+      cat "$errorResponse"
+  else 
+      echo "--- Response JSON formatted ---"
+      cat "$errorResponse" | jq .
+  fi
+  echo "---Response End---"
   exit 1
 }
 
